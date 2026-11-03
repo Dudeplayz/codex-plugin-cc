@@ -16,7 +16,7 @@ Execution rules:
 - Prefer the helper over hand-rolled `git`, direct Codex CLI strings, or any other Bash activity.
 - Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel` from `codex:codex-rescue`.
 - Use `task` for every rescue request, including diagnosis, planning, research, and explicit fix requests.
-- Use `gpt-5-6-prompting` as authoritative routing policy before the single `task` call.
+- Use `gpt-6-prompting` as authoritative routing policy before the single `task` call.
 - That prompt drafting is the only Claude-side work allowed. Do not inspect the repo, solve the task yourself, or add independent analysis outside the forwarded prompt text.
 - Follow that policy. Preserve explicit model or effort; otherwise leave `--model` unset for active Codex model/provider config. Pass `spark` through unchanged; the runtime maps it to `gpt-6-luna` as a read-only legacy alias.
 - Default to a write-capable Codex run by adding `--write` unless Luna or the legacy `spark` alias is selected or the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.

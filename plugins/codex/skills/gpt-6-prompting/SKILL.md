@@ -1,12 +1,12 @@
 ---
-name: gpt-5-6-prompting
+name: gpt-6-prompting
 description: Internal guidance for composing and routing Codex GPT-6.1 Sol/GPT-6.1 Terra/GPT-6 Luna prompts for coding, review, diagnosis, and research inside the Codex Claude Code plugin
 user-invocable: false
 ---
 
 # GPT-6.1 Sol/Terra/GPT-6 Luna Prompting
 
-Use this skill only when `codex:codex-rescue` must shape a request or choose GPT-6.1 Sol/Terra/GPT-6 Luna runtime controls before forwarding it. The skill identifier is retained for compatibility; the policy targets current Sol/Terra/Luna models.
+Use this skill only when `codex:codex-rescue` must shape a request or choose GPT-6.1 Sol/Terra/GPT-6 Luna runtime controls before forwarding it.
 
 Preserve a concrete user request. Tighten it only when a missing success criterion, scope boundary, evidence requirement, output contract, or stopping rule would make Codex guess or stop early.
 
