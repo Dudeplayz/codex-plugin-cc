@@ -20,7 +20,7 @@ export const IDLE_TIMEOUT_ENV = "CODEX_COMPANION_BROKER_IDLE_TIMEOUT_MS";
 export const MAX_THREADS_ENV = "CODEX_COMPANION_BROKER_MAX_THREADS";
 export const WATCH_INTERVAL_ENV = "CODEX_COMPANION_BROKER_WATCH_INTERVAL_MS";
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-const DEFAULT_MAX_THREADS = 8;
+const DEFAULT_MAX_THREADS = 4;
 const DEFAULT_WATCH_INTERVAL_MS = 5000;
 // A client that keeps its socket open after the Claude session died must not
 // keep the broker alive forever.

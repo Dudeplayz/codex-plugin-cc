@@ -324,7 +324,7 @@ itself down, together with the app-server and the MCP servers it started, when:
 
 Codex starts a fresh set of MCP servers for each thread and keeps them until the app-server exits.
 The broker therefore restarts its app-server once it has loaded `CODEX_COMPANION_BROKER_MAX_THREADS`
-threads (default 8, `0` disables) and nothing is running. While it runs, each broker logs restarts and
+threads (default 4, `0` disables) and nothing is running. While it runs, each broker logs restarts and
 the reason for its shutdown to `broker.log` in its session directory.
 
 ### Does the plugin use a separate Codex runtime?
