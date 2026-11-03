@@ -112,7 +112,8 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(rescue, /run the `codex:codex-rescue` subagent in the background/i);
   assert.match(rescue, /default to foreground/i);
   assert.match(rescue, /Do not forward them to `task`/i);
-  assert.match(rescue, /`--model` and `--effort` are runtime-selection flags/i);
+  assert.match(rescue, /`--model`, `--effort`, `--mcp`, and `--cwd` are runtime-selection flags/i);
+  assert.match(rescue, /\[--mcp <names\|none\|all>\] \[--cwd <path>\]/);
   assert.match(rescue, /Preserve explicit model or effort; otherwise leave `--model` unset for active Codex model\/provider config/i);
   assert.match(rescue, /uses `gpt-5-6-prompting` as authoritative routing policy/i);
   assert.match(rescue, /maps `spark` to `gpt-6-luna`/i);
@@ -135,6 +136,7 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(agent, /Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
   assert.match(agent, /Preserve explicit model or effort; otherwise leave `--model` unset for active Codex model\/provider config/i);
   assert.match(agent, /Use `gpt-5-6-prompting` as authoritative policy/i);
+  assert.match(agent, /Treat `--effort <value>`, `--model <value>`, `--mcp <value>`, and `--cwd <path>` as runtime controls/i);
   assert.match(agent, /pass `spark` through unchanged; the runtime maps it to `gpt-6-luna`/i);
   assert.match(agent, /Return the stdout of the `codex-companion` command exactly as-is/i);
   assert.match(agent, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
@@ -200,10 +202,11 @@ test("internal docs use task terminology for rescue runs", () => {
   assert.match(promptingSkill, /Authoritative routing policy/i);
   assert.match(promptingSkill, /Direct Luna stays no-source-write/i);
   assert.match(promptingSkill, /Dedicated `test_runner` may use workspace-write for generated build\/test artifacts only/i);
-  assert.match(promptingSkill, /Root Sol at medium may own one Low-Risk coding task only when every condition holds/i);
+  assert.match(promptingSkill, /Terra at `high` with `--write` may own one Low-Risk coding task only when every condition holds/i);
+  assert.match(promptingSkill, /rerun on Sol at `high`; do not retry on Terra/i);
   assert.match(promptingSkill, /Use `medium` when cause, scope, and validation are clear/i);
   assert.match(promptingSkill, /If effort or scope is unclear, route to Sol at `high`/i);
-  assert.match(promptingSkill, /Use Sol for implementation and Luna only for bounded routine no-source-write workers/i);
+  assert.match(promptingSkill, /Use Sol for non-trivial implementation, `gpt-6\.1-terra` for the Low-Risk coding task below/i);
 });
 
 test("hooks keep session-end cleanup and stop gating enabled", () => {

@@ -26,6 +26,8 @@ Command selection:
 - If the forwarded request includes `--background` or `--wait`, treat that as Claude-side execution control only. Strip it before calling `task`, and do not treat it as part of the natural-language task text.
 - If the forwarded request includes `--model`, pass it through to `task`, preserving the raw `spark` alias so its read-only restriction is enforced.
 - If the forwarded request includes `--effort`, pass it through to `task`.
+- If the forwarded request includes `--mcp`, pass it through to `task`. `--mcp rea,playwright` enables only those configured MCP servers for the Codex thread, `--mcp none` disables all of them, and `--mcp all` keeps the Codex config.
+- If the forwarded request includes `--cwd <path>`, pass it through to `task` so Codex runs in, and may only write to, that repository or worktree.
 - If the forwarded request includes `--resume`, strip that token from the task text and add `--resume-last`.
 - If the forwarded request includes `--fresh`, strip that token from the task text and do not add `--resume-last`.
 - `--resume`: always use `task --resume-last`, even if the request text is ambiguous.

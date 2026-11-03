@@ -106,7 +106,13 @@ function buildConfigReadResult() {
       };
     default:
       return {
-        config: { model_provider: "openai" },
+        config: {
+          model_provider: "openai",
+          mcp_servers: {
+            rea: { command: "rea", args: ["mcp"], enabled: false },
+            playwright: { command: "npx", args: ["@playwright/mcp"] }
+          }
+        },
         origins: {}
       };
   }
@@ -312,7 +318,9 @@ rl.on("line", (line) => {
         if (requiresExperimental("persistExtendedHistory", message, state) || requiresExperimental("persistFullHistory", message, state)) {
           throw new Error("thread/start.persistFullHistory requires experimentalApi capability");
         }
+        state.lastThreadStartConfig = message.params.config ?? null;
         const thread = nextThread(state, message.params.cwd, message.params.ephemeral);
+        saveState(state);
         send({ id: message.id, result: { thread: buildThread(thread), model: message.params.model || "gpt-5.4", modelProvider: "openai", serviceTier: null, cwd: thread.cwd, approvalPolicy: "never", sandbox: { type: "readOnly", access: { type: "fullAccess" }, networkAccess: false }, reasoningEffort: null } });
         send({ method: "thread/started", params: { thread: { id: thread.id } } });
         break;

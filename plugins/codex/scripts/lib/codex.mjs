@@ -60,14 +60,15 @@ function cleanCodexStderr(stderr) {
 }
 
 /** @returns {ThreadStartParams} */
-function buildThreadParams(cwd, options = {}) {
+export function buildThreadParams(cwd, options = {}) {
   return {
     cwd,
     model: options.model ?? null,
     approvalPolicy: options.approvalPolicy ?? "never",
     sandbox: options.sandbox ?? "read-only",
     serviceName: SERVICE_NAME,
-    ephemeral: options.ephemeral ?? true
+    ephemeral: options.ephemeral ?? true,
+    ...(options.config ? { config: options.config } : {})
   };
 }
 
@@ -78,8 +79,57 @@ function buildResumeParams(threadId, cwd, options = {}) {
     cwd,
     model: options.model ?? null,
     approvalPolicy: options.approvalPolicy ?? "never",
-    sandbox: options.sandbox ?? "read-only"
+    sandbox: options.sandbox ?? "read-only",
+    ...(options.config ? { config: options.config } : {})
   };
+}
+
+/**
+ * Parses an `--mcp` value: `all` (or empty) keeps the Codex config as is,
+ * `none` disables every configured MCP server, and a comma-separated list
+ * enables only those servers for the thread.
+ * @returns {string[] | null}
+ */
+export function parseMcpSelection(value) {
+  const normalized = String(value ?? "").trim();
+  if (!normalized || normalized.toLowerCase() === "all") {
+    return null;
+  }
+  if (normalized.toLowerCase() === "none") {
+    return [];
+  }
+  return [...new Set(normalized.split(",").map((name) => name.trim()).filter(Boolean))];
+}
+
+/**
+ * Builds the per-thread config override that switches MCP servers on or off.
+ * Codex starts every enabled MCP server for each thread, so keeping the set
+ * small keeps the shared app-server small.
+ */
+export function buildMcpServerConfig(configuredServers, selection) {
+  if (!Array.isArray(selection)) {
+    return null;
+  }
+  const configuredNames = Object.keys(configuredServers ?? {});
+  const unknown = selection.filter((name) => !configuredNames.includes(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown MCP server${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}. ` +
+        `Configured: ${configuredNames.join(", ") || "none"}.`
+    );
+  }
+  const enabled = new Set(selection);
+  return {
+    mcp_servers: Object.fromEntries(configuredNames.map((name) => [name, { enabled: enabled.has(name) }]))
+  };
+}
+
+async function resolveThreadConfig(client, cwd, options) {
+  if (!Array.isArray(options.mcpServers)) {
+    return null;
+  }
+  const response = await client.request("config/read", { cwd });
+  return buildMcpServerConfig(response?.config?.mcp_servers, options.mcpServers);
 }
 
 /** @returns {UserInput[]} */
@@ -1100,13 +1150,15 @@ export async function runAppServerTurn(cwd, options = {}) {
 
   return withAppServer(cwd, async (client) => {
     let threadId;
+    const config = await resolveThreadConfig(client, cwd, options);
 
     if (options.resumeThreadId) {
       emitProgress(options.onProgress, `Resuming thread ${options.resumeThreadId}.`, "starting");
       const response = await resumeThread(client, options.resumeThreadId, cwd, {
         model: options.model,
         sandbox: options.sandbox,
-        ephemeral: false
+        ephemeral: false,
+        config
       });
       threadId = response.thread.id;
     } else {
@@ -1115,6 +1167,7 @@ export async function runAppServerTurn(cwd, options = {}) {
         model: options.model,
         sandbox: options.sandbox,
         ephemeral: options.persistThread ? false : true,
+        config,
         threadName: options.persistThread ? options.threadName : options.threadName ?? null
       });
       threadId = response.thread.id;
