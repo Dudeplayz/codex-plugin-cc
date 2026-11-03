@@ -18,6 +18,7 @@ import {
   loadBrokerSession,
   loadSessionBrokers,
   PID_FILE_ENV,
+  removeSessionRegistry,
   sendBrokerShutdown,
   teardownBrokerSession,
   unregisterSessionBroker
@@ -163,6 +164,7 @@ async function handleSessionEnd(input) {
   if (brokers.length === 0) {
     clearBrokerSession(cwd);
   }
+  removeSessionRegistry(sessionId);
 }
 
 async function main() {

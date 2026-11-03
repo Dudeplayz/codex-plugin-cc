@@ -192,10 +192,20 @@ export function registerSessionBroker(sessionId, broker) {
     return;
   }
   const registryFile = resolveSessionRegistryFile(sessionId, broker.endpoint);
-  fs.mkdirSync(path.dirname(registryFile), { recursive: true });
   const tempFile = `${registryFile}.${process.pid}.tmp`;
-  fs.writeFileSync(tempFile, `${JSON.stringify(broker, null, 2)}\n`, "utf8");
-  fs.renameSync(tempFile, registryFile);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.mkdirSync(path.dirname(registryFile), { recursive: true });
+      fs.writeFileSync(tempFile, `${JSON.stringify(broker, null, 2)}\n`, "utf8");
+      fs.renameSync(tempFile, registryFile);
+      return;
+    } catch (error) {
+      // SessionEnd may remove the session directory in between; recreate it.
+      if (error?.code !== "ENOENT" || attempt >= 2) {
+        throw error;
+      }
+    }
+  }
 }
 
 export function unregisterSessionBroker(sessionId, endpoint) {
@@ -207,10 +217,17 @@ export function unregisterSessionBroker(sessionId, endpoint) {
   } catch {
     // Already removed.
   }
+}
+
+/** Removes the session's registry directory once the session has ended. */
+export function removeSessionRegistry(sessionId) {
+  if (!sessionId) {
+    return;
+  }
   try {
     fs.rmdirSync(resolveSessionRegistryDir(sessionId));
   } catch {
-    // Other brokers of the session are still registered.
+    // Not empty or already removed.
   }
 }
 

@@ -9,7 +9,7 @@ import { parseArgs } from "./lib/args.mjs";
 import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
 import { clearBrokerStateFile, unregisterSessionBroker } from "./lib/broker-lifecycle.mjs";
-import { isProcessAlive, listDescendantPids, readProcessIdentities, signalMatchingProcesses } from "./lib/process.mjs";
+import { isProcessAlive, signalMatchingProcesses, snapshotDescendantIdentities } from "./lib/process.mjs";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
 // Codex starts a fresh set of MCP servers for every thread it loads and keeps
@@ -196,7 +196,7 @@ async function main() {
     // MCP servers run in their own process groups; remember them, with their
     // identity, before the app-server exits and they get reparented. Codex
     // normally takes them down itself, this only catches stragglers.
-    const descendants = appServerPid ? readProcessIdentities(listDescendantPids(appServerPid)) : new Map();
+    const descendants = appServerPid ? snapshotDescendantIdentities(appServerPid) : new Map();
     let exited = false;
     await Promise.race([
       client.close().then(

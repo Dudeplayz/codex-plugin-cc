@@ -15,6 +15,7 @@ import {
   loadBrokerSession,
   loadSessionBrokers,
   registerSessionBroker,
+  removeSessionRegistry,
   unregisterSessionBroker
 } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { createBrokerEndpoint } from "../plugins/codex/scripts/lib/broker-endpoint.mjs";
@@ -319,4 +320,20 @@ test("isBrokerProcess recognises a live broker by its endpoint", async () => {
   assert.equal(isBrokerProcess(broker.child.pid, "unix:/tmp/other.sock"), false);
   await client.request("broker/shutdown", {});
   assert.equal(await broker.exited, 0, broker.stderr());
+});
+
+test("session registry survives the last broker leaving while another registers", () => {
+  const sessionId = `sess-churn-${process.pid}`;
+  registerSessionBroker(sessionId, { endpoint: "unix:/tmp/old.sock" });
+  unregisterSessionBroker(sessionId, "unix:/tmp/old.sock");
+  registerSessionBroker(sessionId, { endpoint: "unix:/tmp/new.sock" });
+  assert.deepEqual(loadSessionBrokers(sessionId).map((broker) => broker.endpoint), ["unix:/tmp/new.sock"]);
+
+  // A registration after SessionEnd removed the directory recreates it.
+  unregisterSessionBroker(sessionId, "unix:/tmp/new.sock");
+  removeSessionRegistry(sessionId);
+  registerSessionBroker(sessionId, { endpoint: "unix:/tmp/late.sock" });
+  assert.deepEqual(loadSessionBrokers(sessionId).map((broker) => broker.endpoint), ["unix:/tmp/late.sock"]);
+  unregisterSessionBroker(sessionId, "unix:/tmp/late.sock");
+  removeSessionRegistry(sessionId);
 });

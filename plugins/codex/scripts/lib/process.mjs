@@ -198,6 +198,19 @@ export function terminateProcessTreeDeep(pid, options = {}) {
   return { ...result, pids: [pid, ...descendants] };
 }
 
+// `lstart` is five words in the C locale, e.g. "Tue Nov  3 10:00:00 2026".
+const IDENTITY_PATTERN = /^(\S+\s+\S+\s+\S+\s+\S+\s+\S+)\s+(.*)$/;
+
+function parseIdentity(text) {
+  const match = text.trim().match(IDENTITY_PATTERN);
+  return match ? `${match[1].replace(/\s+/g, " ")} ${match[2].trim()}` : null;
+}
+
+function runPs(args, options) {
+  const runCommandImpl = options.runCommandImpl ?? runCommand;
+  return runCommandImpl("ps", args, { env: { ...process.env, LC_ALL: "C" } });
+}
+
 /**
  * Reads a stable identity (start time plus command line) for each PID, so a
  * later signal can make sure the PID was not reused by an unrelated process.
@@ -209,17 +222,60 @@ export function readProcessIdentities(pids, options = {}) {
   if (wanted.length === 0 || (options.platform ?? process.platform) === "win32") {
     return identities;
   }
-  const runCommandImpl = options.runCommandImpl ?? runCommand;
-  const result = runCommandImpl("ps", ["-o", "pid=,lstart=,command=", "-p", wanted.join(",")], {
-    env: { ...process.env, LC_ALL: "C" }
-  });
+  const result = runPs(["-o", "pid=,lstart=,command=", "-p", wanted.join(",")], options);
   if (result.error) {
     return identities;
   }
   for (const line of result.stdout.split("\n")) {
     const match = line.trim().match(/^(\d+)\s+(.+)$/);
-    if (match) {
-      identities.set(Number(match[1]), match[2].trim());
+    const identity = match ? parseIdentity(match[2]) : null;
+    if (identity) {
+      identities.set(Number(match[1]), identity);
+    }
+  }
+  return identities;
+}
+
+/**
+ * Lists the descendants of `rootPid` with their identities, all taken from a
+ * single process-table read so ancestry and identity describe the same
+ * processes.
+ * @returns {Map<number, string>}
+ */
+export function snapshotDescendantIdentities(rootPid, options = {}) {
+  const identities = new Map();
+  if (!Number.isFinite(rootPid) || (options.platform ?? process.platform) === "win32") {
+    return identities;
+  }
+  const result = runPs(["-axo", "pid=,ppid=,lstart=,command="], options);
+  if (result.error || result.status !== 0) {
+    return identities;
+  }
+  const childrenByParent = new Map();
+  const identityByPid = new Map();
+  for (const line of result.stdout.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+    const identity = match ? parseIdentity(match[3]) : null;
+    if (!identity) {
+      continue;
+    }
+    const pid = Number(match[1]);
+    const ppid = Number(match[2]);
+    identityByPid.set(pid, identity);
+    if (!childrenByParent.has(ppid)) {
+      childrenByParent.set(ppid, []);
+    }
+    childrenByParent.get(ppid).push(pid);
+  }
+  const queue = [rootPid];
+  const seen = new Set(queue);
+  while (queue.length > 0) {
+    for (const child of childrenByParent.get(queue.shift()) ?? []) {
+      if (!seen.has(child)) {
+        seen.add(child);
+        identities.set(child, identityByPid.get(child));
+        queue.push(child);
+      }
     }
   }
   return identities;

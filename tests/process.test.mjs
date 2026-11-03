@@ -6,6 +6,7 @@ import {
   readProcessIdentities,
   resolveClaudeSessionPid,
   signalMatchingProcesses,
+  snapshotDescendantIdentities,
   terminateProcessTree,
   terminateProcessTreeDeep
 } from "../plugins/codex/scripts/lib/process.mjs";
@@ -144,4 +145,33 @@ test("signalMatchingProcesses skips PIDs that were reused", () => {
   });
   assert.deepEqual(signalled, [11]);
   assert.deepEqual(signals, [[11, "SIGTERM"]]);
+});
+
+test("snapshotDescendantIdentities takes ancestry and identity from one process-table read", () => {
+  const calls = [];
+  const table = [
+    "10     1 Tue Nov  3 09:00:00 2026 node broker.mjs",
+    "11    10 Tue Nov  3 09:00:01 2026 codex app-server",
+    "12    11 Tue Nov  3 09:00:02 2026 node mcp-a",
+    "20     1 Tue Nov  3 09:00:03 2026 /usr/bin/vim notes.txt"
+  ].join("\n");
+  const identities = snapshotDescendantIdentities(10, {
+    platform: "darwin",
+    runCommandImpl(command, args) {
+      calls.push(args.join(" "));
+      return psResult(table);
+    }
+  });
+  assert.deepEqual(calls, ["-axo pid=,ppid=,lstart=,command="]);
+  assert.deepEqual([...identities], [
+    [11, "Tue Nov 3 09:00:01 2026 codex app-server"],
+    [12, "Tue Nov 3 09:00:02 2026 node mcp-a"]
+  ]);
+
+  // The identity format matches what readProcessIdentities reports later.
+  const later = readProcessIdentities([12], {
+    platform: "darwin",
+    runCommandImpl: () => psResult("12 Tue Nov  3 09:00:02 2026 node mcp-a\n")
+  });
+  assert.equal(later.get(12), identities.get(12));
 });
