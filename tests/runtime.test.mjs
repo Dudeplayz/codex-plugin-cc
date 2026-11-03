@@ -175,7 +175,7 @@ test("task runs when the active provider does not require OpenAI login", () => {
   assert.match(result.stdout, /Handled the requested task/);
 });
 
-test("task --mcp enables only the selected MCP servers for the thread", () => {
+test("task and review --mcp switch MCP servers for the thread", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
   installFakeCodex(binDir);
@@ -188,9 +188,18 @@ test("task --mcp enables only the selected MCP servers for the thread", () => {
 
   const selected = run("node", [SCRIPT, "task", "--mcp", "rea", "inspect the binary"], { cwd: repo, env });
   assert.equal(selected.status, 0, selected.stderr);
+  assert.deepEqual(fakeState().lastThreadStartConfig, { mcp_servers: { rea: { enabled: true } } });
+
+  const exclusive = run("node", [SCRIPT, "task", "--mcp", "none,rea", "only rea"], { cwd: repo, env });
+  assert.equal(exclusive.status, 0, exclusive.stderr);
   assert.deepEqual(fakeState().lastThreadStartConfig, {
     mcp_servers: { rea: { enabled: true }, playwright: { enabled: false } }
   });
+
+  fs.writeFileSync(path.join(repo, "README.md"), "hello again\n");
+  const review = run("node", [SCRIPT, "review", "--mcp", "-playwright"], { cwd: repo, env });
+  assert.equal(review.status, 0, review.stderr);
+  assert.deepEqual(fakeState().lastThreadStartConfig, { mcp_servers: { playwright: { enabled: false } } });
 
   const plain = run("node", [SCRIPT, "task", "no override"], { cwd: repo, env });
   assert.equal(plain.status, 0, plain.stderr);

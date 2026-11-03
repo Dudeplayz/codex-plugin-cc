@@ -49,7 +49,7 @@ test("adversarial review command uses AskUserQuestion and background Bash while 
   assert.match(source, /```bash/);
   assert.match(source, /```typescript/);
   assert.match(source, /adversarial-review "\$ARGUMENTS"/);
-  assert.match(source, /\[--scope auto\|working-tree\|branch\] \[focus \.\.\.\]/);
+  assert.match(source, /\[--scope auto\|working-tree\|branch\] \[--mcp <names\|none\|all>\] \[focus \.\.\.\]/);
   assert.match(source, /run_in_background:\s*true/);
   assert.match(source, /command:\s*`node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-companion\.mjs" adversarial-review "\$ARGUMENTS"`/);
   assert.match(source, /description:\s*"Codex adversarial review"/);
@@ -204,6 +204,7 @@ test("internal docs use task terminology for rescue runs", () => {
   assert.match(promptingSkill, /Dedicated `test_runner` may use workspace-write for generated build\/test artifacts only/i);
   assert.match(promptingSkill, /Terra at `high` with `--write` may own one Low-Risk coding task only when every condition holds/i);
   assert.match(promptingSkill, /rerun on Sol at `high`; do not retry on Terra/i);
+  assert.match(promptingSkill, /add `--mcp rea` only for reverse-engineering work/i);
   assert.match(promptingSkill, /Use `medium` when cause, scope, and validation are clear/i);
   assert.match(promptingSkill, /If effort or scope is unclear, route to Sol at `high`/i);
   assert.match(promptingSkill, /Use Sol for non-trivial implementation, `gpt-6\.1-terra` for the Low-Risk coding task below/i);

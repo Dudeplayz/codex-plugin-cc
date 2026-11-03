@@ -171,7 +171,7 @@ Ask Codex to redesign the database connection to be more resilient.
 - if `--model` is omitted, active Codex model/provider config applies; explicit `--effort` still passes through
 - if you say `spark`, plugin maps it to `gpt-6-luna`; the legacy spark alias is read-only for supplied-material summaries
 - follow-up rescue requests can continue the latest Codex task in the repo
-- `--mcp <names>` enables only the listed MCP servers from your Codex config for that thread, `--mcp none` disables all of them, `--mcp all` (or no flag) keeps your config; set `CODEX_COMPANION_DEFAULT_MCP` to change the default. MCP servers that come from Codex plugins are not affected.
+- `--mcp` switches MCP servers from your Codex config per thread, also for `/codex:review` and `/codex:adversarial-review`: `--mcp rea` (or `+rea`) turns rea on in addition to your config, `--mcp -context7` turns one off, `--mcp none` turns all off and `--mcp none,rea` runs rea alone; `--mcp all` (or no flag) keeps your config. Keep heavy servers such as rea `enabled = false` in `config.toml` and switch them on only for the tasks that need them. `CODEX_COMPANION_DEFAULT_MCP` sets a default. MCP servers that come from Codex plugins are not affected.
 - `--cwd <path>` runs Codex in another repository or git worktree; Codex can only write inside the repository that path belongs to
 
 ### `/codex:transfer`

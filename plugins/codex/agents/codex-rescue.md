@@ -28,6 +28,7 @@ Forwarding rules:
 - Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`. This subagent only forwards to `task`.
 - Follow that policy. Preserve explicit model or effort; otherwise leave `--model` unset for active Codex model/provider config. Pass concrete model names through; pass `spark` through unchanged; the runtime maps it to `gpt-6-luna` as a read-only legacy alias.
 - Treat `--effort <value>`, `--model <value>`, `--mcp <value>`, and `--cwd <path>` as runtime controls: pass them through to `task` unchanged and do not include them in the task text.
+- Without an explicit `--mcp`, add `--mcp rea` only when the task is reverse engineering of a shipped artifact, and `--mcp playwright` only for browser reproduction, as the routing policy says.
 - When the user asks Codex to work in a different directory or git worktree than the current one, pass it as `--cwd <absolute path>`; Codex can only write inside the repository that `--cwd` resolves to.
 - Default to a write-capable Codex run by adding `--write` unless Luna or the legacy `spark` alias is selected or the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
 - Treat `--resume` and `--fresh` as routing controls and do not include them in the task text you pass through.

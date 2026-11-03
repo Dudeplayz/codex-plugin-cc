@@ -85,20 +85,33 @@ function buildResumeParams(threadId, cwd, options = {}) {
 }
 
 /**
- * Parses an `--mcp` value: `all` (or empty) keeps the Codex config as is,
- * `none` disables every configured MCP server, and a comma-separated list
- * enables only those servers for the thread.
- * @returns {string[] | null}
+ * Parses an `--mcp` value. Names switch configured MCP servers on for the
+ * thread (`rea` or `+rea`), a leading `-` switches one off, and `none` first
+ * switches every configured server off, so `none,rea` runs rea alone. `all`
+ * (or an empty value) keeps the Codex config as is.
+ * @returns {{ exclusive: boolean, enable: string[], disable: string[] } | null}
  */
 export function parseMcpSelection(value) {
-  const normalized = String(value ?? "").trim();
-  if (!normalized || normalized.toLowerCase() === "all") {
+  const tokens = String(value ?? "")
+    .split(",")
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (tokens.length === 0 || (tokens.length === 1 && tokens[0].toLowerCase() === "all")) {
     return null;
   }
-  if (normalized.toLowerCase() === "none") {
-    return [];
+  const selection = { exclusive: false, enable: [], disable: [] };
+  for (const token of tokens) {
+    if (token.toLowerCase() === "none") {
+      selection.exclusive = true;
+    } else if (token.startsWith("-")) {
+      selection.disable.push(token.slice(1));
+    } else {
+      selection.enable.push(token.replace(/^\+/, ""));
+    }
   }
-  return [...new Set(normalized.split(",").map((name) => name.trim()).filter(Boolean))];
+  selection.enable = [...new Set(selection.enable.filter(Boolean))];
+  selection.disable = [...new Set(selection.disable.filter(Boolean))];
+  return selection;
 }
 
 /**
@@ -107,25 +120,34 @@ export function parseMcpSelection(value) {
  * small keeps the shared app-server small.
  */
 export function buildMcpServerConfig(configuredServers, selection) {
-  if (!Array.isArray(selection)) {
+  if (!selection) {
     return null;
   }
   const configuredNames = Object.keys(configuredServers ?? {});
-  const unknown = selection.filter((name) => !configuredNames.includes(name));
+  const unknown = [...selection.enable, ...selection.disable].filter((name) => !configuredNames.includes(name));
   if (unknown.length > 0) {
     throw new Error(
       `Unknown MCP server${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}. ` +
         `Configured: ${configuredNames.join(", ") || "none"}.`
     );
   }
-  const enabled = new Set(selection);
-  return {
-    mcp_servers: Object.fromEntries(configuredNames.map((name) => [name, { enabled: enabled.has(name) }]))
-  };
+  const servers = {};
+  if (selection.exclusive) {
+    for (const name of configuredNames) {
+      servers[name] = { enabled: false };
+    }
+  }
+  for (const name of selection.enable) {
+    servers[name] = { enabled: true };
+  }
+  for (const name of selection.disable) {
+    servers[name] = { enabled: false };
+  }
+  return Object.keys(servers).length > 0 ? { mcp_servers: servers } : null;
 }
 
 async function resolveThreadConfig(client, cwd, options) {
-  if (!Array.isArray(options.mcpServers)) {
+  if (!options.mcpServers) {
     return null;
   }
   const response = await client.request("config/read", { cwd });
@@ -1061,6 +1083,7 @@ export async function runAppServerReview(cwd, options = {}) {
       model: options.model,
       sandbox: "read-only",
       ephemeral: true,
+      config: await resolveThreadConfig(client, cwd, options),
       threadName: options.threadName
     });
     const sourceThreadId = thread.thread.id;

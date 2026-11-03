@@ -18,6 +18,7 @@ Execution mode:
 - If neither flag is present, default to foreground.
 - `--background` and `--wait` are execution flags for Claude Code. Do not forward them to `task`, and do not treat them as part of the natural-language task text.
 - `--model`, `--effort`, `--mcp`, and `--cwd` are runtime-selection flags. Preserve them for the forwarded `task` call, but do not treat them as part of the natural-language task text.
+- `--mcp rea` or `--mcp +rea` switches a configured MCP server on for the Codex thread on top of the Codex config, `--mcp -context7` switches one off, `--mcp none` switches all of them off and `--mcp none,rea` runs rea alone; `--mcp all` keeps the Codex config. The rescue subagent adds `--mcp rea` on its own only for reverse-engineering tasks.
 - If the request includes `--resume`, do not ask whether to continue. The user already chose.
 - If the request includes `--fresh`, do not ask whether to continue. The user already chose.
 - Otherwise, before starting Codex, check for a resumable rescue thread from this Claude session by running:
