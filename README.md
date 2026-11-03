@@ -139,14 +139,16 @@ Use it when you want Codex to:
 
 It supports `--background`, `--wait`, `--resume`, and `--fresh`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
 
+Claude-Companion preserves active Codex model/provider config when `--model` is omitted. Configure GPT-6.1 Sol for implementation and complex work; select GPT-6 Luna for focused routine no-source-write work. The legacy spark alias is supplied-material, read-only summaries only. Sol medium fits clear bounded work; high fits reviews and ambiguous multi-step work; xhigh/max are selective escalations for a concrete quality gap. Astra is not automatically selected.
+
 Examples:
 
 ```bash
 /codex:rescue investigate why the tests started failing
 /codex:rescue fix the failing test with the smallest safe patch
 /codex:rescue --resume apply the top fix from the last run
-/codex:rescue --model gpt-5.4-mini --effort medium investigate the flaky integration test
-/codex:rescue --model spark fix the issue quickly
+/codex:rescue --model gpt-6.1-sol --effort high investigate the flaky integration test
+/codex:rescue --model spark summarize the supplied test logs
 /codex:rescue --background investigate the regression
 ```
 
@@ -158,8 +160,8 @@ Ask Codex to redesign the database connection to be more resilient.
 
 **Notes:**
 
-- if you do not pass `--model` or `--effort`, Codex chooses its own defaults.
-- if you say `spark`, the plugin maps that to `gpt-5.3-codex-spark`
+- if `--model` is omitted, active Codex model/provider config applies; explicit `--effort` still passes through
+- if you say `spark`, plugin maps it to `gpt-6-luna`; the legacy spark alias is read-only for supplied-material summaries
 - follow-up rescue requests can continue the latest Codex task in the repo
 
 ### `/codex:transfer`
@@ -270,11 +272,11 @@ The Codex plugin wraps the [Codex app server](https://developers.openai.com/code
 
 ### Common Configurations
 
-If you want to change the default reasoning effort or the default model that gets used by the plugin, you can define that inside your user-level or project-level `config.toml`. For example to always use `gpt-5.4-mini` on `high` for a specific project you can add the following to a `.codex/config.toml` file at the root of the directory you started Claude in:
+If you want to change the default reasoning effort or model used by the plugin, define it inside user-level or project-level `config.toml`. For example to use `gpt-6-luna` on `medium` for a specific project, add this to `.codex/config.toml` at project root:
 
 ```toml
-model = "gpt-5.4-mini"
-model_reasoning_effort = "high"
+model = "gpt-6-luna"
+model_reasoning_effort = "medium"
 ```
 
 Your configuration will be picked up based on:
