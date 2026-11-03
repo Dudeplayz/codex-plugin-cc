@@ -198,17 +198,65 @@ export function terminateProcessTreeDeep(pid, options = {}) {
   return { ...result, pids: [pid, ...descendants] };
 }
 
-export function killSurvivors(pids, options = {}) {
+/**
+ * Reads a stable identity (start time plus command line) for each PID, so a
+ * later signal can make sure the PID was not reused by an unrelated process.
+ * @returns {Map<number, string>}
+ */
+export function readProcessIdentities(pids, options = {}) {
+  const identities = new Map();
+  const wanted = pids.filter((pid) => Number.isInteger(pid) && pid > 0);
+  if (wanted.length === 0 || (options.platform ?? process.platform) === "win32") {
+    return identities;
+  }
+  const runCommandImpl = options.runCommandImpl ?? runCommand;
+  const result = runCommandImpl("ps", ["-o", "pid=,lstart=,command=", "-p", wanted.join(",")], {
+    env: { ...process.env, LC_ALL: "C" }
+  });
+  if (result.error) {
+    return identities;
+  }
+  for (const line of result.stdout.split("\n")) {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    if (match) {
+      identities.set(Number(match[1]), match[2].trim());
+    }
+  }
+  return identities;
+}
+
+/**
+ * Sends `signal` to every PID whose identity still matches the snapshot taken
+ * by readProcessIdentities. Returns the PIDs that were signalled.
+ */
+export function signalMatchingProcesses(identities, signal, options = {}) {
   const killImpl = options.killImpl ?? process.kill.bind(process);
-  const survivors = pids.filter((pid) => isProcessAlive(pid, { killImpl }));
-  for (const pid of survivors) {
+  const current = readProcessIdentities([...identities.keys()], options);
+  const signalled = [];
+  for (const [pid, identity] of identities) {
+    if (current.get(pid) !== identity) {
+      continue;
+    }
     try {
-      killImpl(pid, "SIGKILL");
+      killImpl(pid, signal);
+      signalled.push(pid);
     } catch {
       // Already gone.
     }
   }
-  return survivors;
+  return signalled;
+}
+
+export function readProcessCommand(pid, options = {}) {
+  if (!Number.isInteger(pid) || pid <= 0 || (options.platform ?? process.platform) === "win32") {
+    return null;
+  }
+  const runCommandImpl = options.runCommandImpl ?? runCommand;
+  const result = runCommandImpl("ps", ["-o", "command=", "-p", String(pid)]);
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  return result.stdout.trim() || null;
 }
 
 function readParentPid(pid, runCommandImpl) {

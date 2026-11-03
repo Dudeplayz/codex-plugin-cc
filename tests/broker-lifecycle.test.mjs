@@ -11,8 +11,11 @@ import { buildEnv, installFakeCodex } from "./fake-codex-fixture.mjs";
 import { initGitRepo, makeTempDir, run } from "./helpers.mjs";
 import {
   ensureBrokerSession,
+  isBrokerProcess,
   loadBrokerSession,
-  loadSessionBrokers
+  loadSessionBrokers,
+  registerSessionBroker,
+  unregisterSessionBroker
 } from "../plugins/codex/scripts/lib/broker-lifecycle.mjs";
 import { createBrokerEndpoint } from "../plugins/codex/scripts/lib/broker-endpoint.mjs";
 import { isProcessAlive, terminateProcessTreeDeep } from "../plugins/codex/scripts/lib/process.mjs";
@@ -258,4 +261,62 @@ test("ensureBrokerSession records the Claude session and its PID", async () => {
     terminateProcessTreeDeep(session.pid);
     await waitFor(() => !isProcessAlive(session.pid));
   }
+});
+
+test("session registry keeps one entry per broker", () => {
+  const sessionId = `sess-registry-${process.pid}`;
+  registerSessionBroker(sessionId, { endpoint: "unix:/tmp/a.sock", cwd: "/a" });
+  registerSessionBroker(sessionId, { endpoint: "unix:/tmp/b.sock", cwd: "/b" });
+  registerSessionBroker(sessionId, { endpoint: "unix:/tmp/a.sock", cwd: "/a2" });
+  const byEndpoint = (brokers) => Object.fromEntries(brokers.map((broker) => [broker.endpoint, broker.cwd]));
+  assert.deepEqual(byEndpoint(loadSessionBrokers(sessionId)), { "unix:/tmp/a.sock": "/a2", "unix:/tmp/b.sock": "/b" });
+
+  unregisterSessionBroker(sessionId, "unix:/tmp/a.sock");
+  assert.deepEqual(byEndpoint(loadSessionBrokers(sessionId)), { "unix:/tmp/b.sock": "/b" });
+  unregisterSessionBroker(sessionId, "unix:/tmp/b.sock");
+  assert.deepEqual(loadSessionBrokers(sessionId), []);
+});
+
+test("SessionEnd never signals a recorded PID that is no longer the broker", async () => {
+  const { repo, env } = setupWorkspace();
+  const pluginData = makeTempDir();
+  const sessionId = `sess-reused-${process.pid}`;
+  const bystander = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  spawnedPids.add(bystander.pid);
+  const previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
+  process.env.CLAUDE_PLUGIN_DATA = pluginData;
+  try {
+    const sessionDir = makeTempDir("cxc-test-");
+    const endpoint = createBrokerEndpoint(sessionDir);
+    registerSessionBroker(sessionId, { endpoint, pid: bystander.pid, sessionDir, cwd: repo });
+    assert.equal(isBrokerProcess(bystander.pid, endpoint), false);
+
+    const started = Date.now();
+    const result = run("node", [SESSION_HOOK, "SessionEnd"], {
+      cwd: repo,
+      env: { ...env, CLAUDE_PLUGIN_DATA: pluginData },
+      input: JSON.stringify({ hook_event_name: "SessionEnd", cwd: repo, session_id: sessionId })
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(Date.now() - started < 4000, "SessionEnd must finish inside its hook timeout");
+    assert.equal(isProcessAlive(bystander.pid), true);
+    assert.deepEqual(loadSessionBrokers(sessionId), []);
+  } finally {
+    bystander.kill("SIGKILL");
+    if (previousPluginData === undefined) {
+      delete process.env.CLAUDE_PLUGIN_DATA;
+    } else {
+      process.env.CLAUDE_PLUGIN_DATA = previousPluginData;
+    }
+  }
+});
+
+test("isBrokerProcess recognises a live broker by its endpoint", async () => {
+  const { repo, env } = setupWorkspace();
+  const broker = startBroker({ cwd: repo, env, extraArgs: ["--watch-interval-ms", "100"] });
+  const client = await connect(broker.endpoint);
+  assert.equal(isBrokerProcess(broker.child.pid, broker.endpoint), true);
+  assert.equal(isBrokerProcess(broker.child.pid, "unix:/tmp/other.sock"), false);
+  await client.request("broker/shutdown", {});
+  assert.equal(await broker.exited, 0, broker.stderr());
 });

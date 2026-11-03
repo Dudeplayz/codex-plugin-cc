@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -6,7 +7,7 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "./broker-endpoint.mjs";
-import { resolveClaudeSessionPid } from "./process.mjs";
+import { readProcessCommand, resolveClaudeSessionPid } from "./process.mjs";
 import { resolveStateDir, resolveStateRootDir } from "./state.mjs";
 import { SESSION_ID_ENV } from "./tracked-jobs.mjs";
 
@@ -151,9 +152,16 @@ export function clearBrokerStateFile(stateFile, { endpoint = null } = {}) {
   }
 }
 
-function resolveSessionRegistryFile(sessionId) {
+// Each broker gets its own registry file so brokers, commands and hooks of the
+// same session never overwrite each other's entries.
+function resolveSessionRegistryDir(sessionId) {
   const safeId = String(sessionId).replace(/[^a-zA-Z0-9._-]+/g, "-");
-  return path.join(resolveStateRootDir(), SESSION_REGISTRY_DIR, `${safeId}.json`);
+  return path.join(resolveStateRootDir(), SESSION_REGISTRY_DIR, safeId);
+}
+
+function resolveSessionRegistryFile(sessionId, endpoint) {
+  const key = createHash("sha256").update(String(endpoint)).digest("hex").slice(0, 16);
+  return path.join(resolveSessionRegistryDir(sessionId), `${key}.json`);
 }
 
 /** Lists every broker a Claude session started, across all workspaces. */
@@ -161,46 +169,58 @@ export function loadSessionBrokers(sessionId) {
   if (!sessionId) {
     return [];
   }
-  const registryFile = resolveSessionRegistryFile(sessionId);
-  if (!fs.existsSync(registryFile)) {
-    return [];
-  }
+  const registryDir = resolveSessionRegistryDir(sessionId);
+  let entries;
   try {
-    const parsed = JSON.parse(fs.readFileSync(registryFile, "utf8"));
-    return Array.isArray(parsed.brokers) ? parsed.brokers : [];
+    entries = fs.readdirSync(registryDir).filter((name) => name.endsWith(".json"));
   } catch {
     return [];
   }
-}
-
-function saveSessionBrokers(sessionId, brokers) {
-  const registryFile = resolveSessionRegistryFile(sessionId);
-  if (brokers.length === 0) {
-    if (fs.existsSync(registryFile)) {
-      fs.unlinkSync(registryFile);
+  const brokers = [];
+  for (const name of entries) {
+    try {
+      brokers.push(JSON.parse(fs.readFileSync(path.join(registryDir, name), "utf8")));
+    } catch {
+      // Removed concurrently.
     }
-    return;
   }
-  fs.mkdirSync(path.dirname(registryFile), { recursive: true });
-  fs.writeFileSync(registryFile, `${JSON.stringify({ sessionId, brokers }, null, 2)}\n`, "utf8");
+  return brokers;
 }
 
 export function registerSessionBroker(sessionId, broker) {
-  if (!sessionId) {
+  if (!sessionId || !broker?.endpoint) {
     return;
   }
-  const brokers = loadSessionBrokers(sessionId).filter((entry) => entry.endpoint !== broker.endpoint);
-  saveSessionBrokers(sessionId, [...brokers, broker]);
+  const registryFile = resolveSessionRegistryFile(sessionId, broker.endpoint);
+  fs.mkdirSync(path.dirname(registryFile), { recursive: true });
+  const tempFile = `${registryFile}.${process.pid}.tmp`;
+  fs.writeFileSync(tempFile, `${JSON.stringify(broker, null, 2)}\n`, "utf8");
+  fs.renameSync(tempFile, registryFile);
 }
 
 export function unregisterSessionBroker(sessionId, endpoint) {
-  if (!sessionId) {
+  if (!sessionId || !endpoint) {
     return;
   }
-  saveSessionBrokers(
-    sessionId,
-    loadSessionBrokers(sessionId).filter((entry) => entry.endpoint !== endpoint)
-  );
+  try {
+    fs.unlinkSync(resolveSessionRegistryFile(sessionId, endpoint));
+  } catch {
+    // Already removed.
+  }
+  try {
+    fs.rmdirSync(resolveSessionRegistryDir(sessionId));
+  } catch {
+    // Other brokers of the session are still registered.
+  }
+}
+
+/**
+ * Tells whether `pid` is still the broker serving `endpoint`, so a PID taken
+ * from saved state is never signalled after the OS reused it.
+ */
+export function isBrokerProcess(pid, endpoint, options = {}) {
+  const command = readProcessCommand(pid, options);
+  return Boolean(command && endpoint && command.includes("app-server-broker.mjs") && command.includes(endpoint));
 }
 
 async function isBrokerEndpointReady(endpoint) {

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import {
   listDescendantPids,
+  readProcessIdentities,
   resolveClaudeSessionPid,
+  signalMatchingProcesses,
   terminateProcessTree,
   terminateProcessTreeDeep
 } from "../plugins/codex/scripts/lib/process.mjs";
@@ -123,4 +125,23 @@ test("resolveClaudeSessionPid falls back to the nearest claude ancestor", () => 
     }
   });
   assert.equal(pid, 200);
+});
+
+test("signalMatchingProcesses skips PIDs that were reused", () => {
+  let table = "11 Tue Nov  3 10:00:00 2026 node mcp-a\n12 Tue Nov  3 10:00:01 2026 node mcp-b\n";
+  const runCommandImpl = () => psResult(table);
+  const identities = readProcessIdentities([11, 12], { platform: "darwin", runCommandImpl });
+  assert.equal(identities.size, 2);
+
+  table = "11 Tue Nov  3 10:00:00 2026 node mcp-a\n12 Tue Nov  3 10:05:00 2026 /usr/bin/vim notes.txt\n";
+  const signals = [];
+  const signalled = signalMatchingProcesses(identities, "SIGTERM", {
+    platform: "darwin",
+    runCommandImpl,
+    killImpl(pid, signal) {
+      signals.push([pid, signal]);
+    }
+  });
+  assert.deepEqual(signalled, [11]);
+  assert.deepEqual(signals, [[11, "SIGTERM"]]);
 });

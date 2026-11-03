@@ -9,7 +9,7 @@ import { parseArgs } from "./lib/args.mjs";
 import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
 import { clearBrokerStateFile, unregisterSessionBroker } from "./lib/broker-lifecycle.mjs";
-import { isProcessAlive, killSurvivors, listDescendantPids } from "./lib/process.mjs";
+import { isProcessAlive, listDescendantPids, readProcessIdentities, signalMatchingProcesses } from "./lib/process.mjs";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
 // Codex starts a fresh set of MCP servers for every thread it loads and keeps
@@ -193,9 +193,10 @@ async function main() {
 
   async function closeAppClient(client) {
     const appServerPid = client.proc?.pid ?? null;
-    // MCP servers run in their own process groups; remember them before the
-    // app-server exits and they get reparented.
-    const descendants = appServerPid ? listDescendantPids(appServerPid) : [];
+    // MCP servers run in their own process groups; remember them, with their
+    // identity, before the app-server exits and they get reparented. Codex
+    // normally takes them down itself, this only catches stragglers.
+    const descendants = appServerPid ? readProcessIdentities(listDescendantPids(appServerPid)) : new Map();
     let exited = false;
     await Promise.race([
       client.close().then(
@@ -208,23 +209,17 @@ async function main() {
       ),
       sleep(APP_SERVER_EXIT_TIMEOUT_MS)
     ]);
-    if (!exited && appServerPid) {
-      killSurvivors([appServerPid]);
+    if (!exited && client.proc?.exitCode === null) {
+      // Still our unreaped child, so the PID cannot have been reused.
+      client.proc.kill("SIGKILL");
     }
-    const pending = descendants.filter((pid) => isProcessAlive(pid));
-    for (const pid of pending) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // Already gone.
-      }
-    }
+    const pending = signalMatchingProcesses(descendants, "SIGTERM");
     if (pending.length > 0) {
       const deadline = Date.now() + MCP_EXIT_GRACE_MS;
       while (Date.now() < deadline && pending.some((pid) => isProcessAlive(pid))) {
         await sleep(100);
       }
-      killSurvivors(pending);
+      signalMatchingProcesses(descendants, "SIGKILL");
     }
   }
 

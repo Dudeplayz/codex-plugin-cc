@@ -13,6 +13,7 @@ import {
 import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
 import {
   clearBrokerSession,
+  isBrokerProcess,
   LOG_FILE_ENV,
   loadBrokerSession,
   loadSessionBrokers,
@@ -27,7 +28,9 @@ import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
-const BROKER_EXIT_WAIT_MS = 2000;
+// SessionEnd hooks get 5 seconds; leave room for teardown and job cleanup.
+const BROKER_SHUTDOWN_BUDGET_MS = 2500;
+const BROKER_SHUTDOWN_REQUEST_MS = 1000;
 
 function readHookInput() {
   const raw = fs.readFileSync(0, "utf8").trim();
@@ -92,8 +95,7 @@ function handleSessionStart(input) {
   appendEnvVar(CLAUDE_PID_ENV, resolveClaudeSessionPid());
 }
 
-async function waitForExit(pid, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
+async function waitForExit(pid, deadline) {
   while (Date.now() < deadline) {
     if (!isProcessAlive(pid)) {
       return true;
@@ -103,21 +105,22 @@ async function waitForExit(pid, timeoutMs) {
   return !isProcessAlive(pid);
 }
 
-async function shutdownBroker(broker) {
-  if (broker.endpoint) {
-    await sendBrokerShutdown(broker.endpoint);
-  }
+async function shutdownBroker(broker, deadline) {
   const pid = Number.isInteger(broker.pid) ? broker.pid : null;
-  const exited = pid === null || (await waitForExit(pid, BROKER_EXIT_WAIT_MS));
+  // Saved PIDs can be reused after the broker exits; only a process that still
+  // runs the broker for this endpoint may be signalled.
+  const ownedPid = pid !== null && isBrokerProcess(pid, broker.endpoint) ? pid : null;
+  if (broker.endpoint) {
+    await sendBrokerShutdown(broker.endpoint, Math.max(0, Math.min(BROKER_SHUTDOWN_REQUEST_MS, deadline - Date.now())));
+  }
+  const exited = ownedPid === null || (await waitForExit(ownedPid, deadline));
   teardownBrokerSession({
     endpoint: broker.endpoint ?? null,
     pidFile: broker.pidFile ?? null,
     logFile: broker.logFile ?? null,
     sessionDir: broker.sessionDir ?? null,
-    pid,
-    // Only force-kill a broker that ignored the shutdown request; its PID is
-    // not trusted once it has exited.
-    killProcess: exited ? null : terminateProcessTreeDeep
+    pid: ownedPid,
+    killProcess: exited ? null : (target) => isBrokerProcess(target, broker.endpoint) && terminateProcessTreeDeep(target)
   });
 }
 
@@ -146,7 +149,8 @@ async function handleSessionEnd(input) {
     brokers.push(broker);
   }
 
-  await Promise.all(brokers.map((broker) => shutdownBroker(broker)));
+  const deadline = Date.now() + BROKER_SHUTDOWN_BUDGET_MS;
+  await Promise.all(brokers.map((broker) => shutdownBroker(broker, deadline)));
 
   const workspaces = new Set([cwd, ...brokers.map((broker) => broker.cwd).filter(Boolean)]);
   for (const workspace of workspaces) {
