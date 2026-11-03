@@ -1,5 +1,5 @@
 ---
-name: gpt-6-prompting
+name: codex-prompting
 description: Internal guidance for composing and routing Codex GPT-6.1 Sol/GPT-6.1 Terra/GPT-6 Luna prompts for coding, review, diagnosis, and research inside the Codex Claude Code plugin
 user-invocable: false
 ---

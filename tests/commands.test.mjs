@@ -115,7 +115,7 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(rescue, /`--model`, `--effort`, `--mcp`, and `--cwd` are runtime-selection flags/i);
   assert.match(rescue, /\[--mcp <names\|none\|all>\] \[--cwd <path>\]/);
   assert.match(rescue, /Preserve explicit model or effort; otherwise leave `--model` unset for active Codex model\/provider config/i);
-  assert.match(rescue, /uses `gpt-6-prompting` as authoritative routing policy/i);
+  assert.match(rescue, /uses `codex-prompting` as authoritative routing policy/i);
   assert.match(rescue, /maps `spark` to `gpt-6-luna`/i);
   assert.match(rescue, /If the request includes `--resume`, do not ask whether to continue/i);
   assert.match(rescue, /If the request includes `--fresh`, do not ask whether to continue/i);
@@ -135,17 +135,17 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(agent, /Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own/i);
   assert.match(agent, /Do not call `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
   assert.match(agent, /Preserve explicit model or effort; otherwise leave `--model` unset for active Codex model\/provider config/i);
-  assert.match(agent, /Use `gpt-6-prompting` as authoritative policy/i);
+  assert.match(agent, /Use `codex-prompting` as authoritative policy/i);
   assert.match(agent, /Treat `--effort <value>`, `--model <value>`, `--mcp <value>`, and `--cwd <path>` as runtime controls/i);
   assert.match(agent, /pass `spark` through unchanged; the runtime maps it to `gpt-6-luna`/i);
   assert.match(agent, /Return the stdout of the `codex-companion` command exactly as-is/i);
   assert.match(agent, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
-  assert.match(agent, /gpt-6-prompting/);
+  assert.match(agent, /codex-prompting/);
   assert.match(agent, /authoritative policy for model, effort, direct-worker, and summary selection/i);
   assert.match(agent, /Do not use that skill to inspect the repository, reason through the problem yourself, draft a solution, or do any independent work/i);
   assert.match(runtimeSkill, /only job is to invoke `task` once and return that stdout unchanged/i);
   assert.match(runtimeSkill, /Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel`/i);
-  assert.match(runtimeSkill, /Use `gpt-6-prompting` as authoritative routing policy/i);
+  assert.match(runtimeSkill, /Use `codex-prompting` as authoritative routing policy/i);
   assert.match(runtimeSkill, /That prompt drafting is the only Claude-side work allowed/i);
   assert.match(runtimeSkill, /Preserve explicit model or effort; otherwise leave `--model` unset for active Codex model\/provider config/i);
   assert.match(runtimeSkill, /Pass `spark` through unchanged; the runtime maps it to `gpt-6-luna`/i);
@@ -190,7 +190,7 @@ test("transfer, result, and cancel commands are exposed as deterministic runtime
 
 test("internal docs use task terminology for rescue runs", () => {
   const runtimeSkill = read("skills/codex-cli-runtime/SKILL.md");
-  const promptingSkill = read("skills/gpt-6-prompting/SKILL.md");
+  const promptingSkill = read("skills/codex-prompting/SKILL.md");
 
   assert.match(runtimeSkill, /codex-companion\.mjs" task "<raw arguments>"/);
   assert.match(runtimeSkill, /Use `task` for every rescue request/i);

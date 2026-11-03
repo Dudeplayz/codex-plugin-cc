@@ -90,7 +90,7 @@ for reverse engineering and `--mcp playwright` only for browser reproduction.
 
 ### GPT-6.1 routing for `/codex:rescue`
 
-The `codex:codex-rescue` subagent follows the `gpt-6-prompting` skill to choose model and effort:
+The `codex:codex-rescue` subagent follows the `codex-prompting` skill to choose model and effort:
 
 | Model | Used for |
 | --- | --- |
@@ -107,6 +107,8 @@ verification fails, the task is rerun on Sol at `high`.
 - `/codex:rescue --cwd <path>` runs Codex in another repository or git worktree. Codex can only write
   inside the repository that path belongs to.
 - `--effort max` is accepted.
+- The routing skill is called `codex-prompting` so its name does not change with every model generation;
+  upstream's unused `gpt-5-4-prompting` skill is gone.
 - The test suite no longer inherits the surrounding Claude Code session, and every broker a test starts
   exits with the test process.
 
