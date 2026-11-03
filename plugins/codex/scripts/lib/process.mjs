@@ -117,6 +117,143 @@ export function terminateProcessTree(pid, options = {}) {
   }
 }
 
+export function isProcessAlive(pid, options = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  const killImpl = options.killImpl ?? process.kill.bind(process);
+  try {
+    killImpl(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists but belongs to someone else.
+    return error?.code === "EPERM";
+  }
+}
+
+function readProcessTable(runCommandImpl) {
+  const result = runCommandImpl("ps", ["-axo", "pid=,ppid=,comm="]);
+  if (result.error || result.status !== 0) {
+    return [];
+  }
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+    .filter(Boolean)
+    .map((match) => ({ pid: Number(match[1]), ppid: Number(match[2]), comm: match[3] }));
+}
+
+export function listDescendantPids(rootPid, options = {}) {
+  if (!Number.isFinite(rootPid) || (options.platform ?? process.platform) === "win32") {
+    return [];
+  }
+  const table = readProcessTable(options.runCommandImpl ?? runCommand);
+  const childrenByParent = new Map();
+  for (const entry of table) {
+    if (!childrenByParent.has(entry.ppid)) {
+      childrenByParent.set(entry.ppid, []);
+    }
+    childrenByParent.get(entry.ppid).push(entry.pid);
+  }
+  const descendants = [];
+  const queue = [rootPid];
+  const seen = new Set(queue);
+  while (queue.length > 0) {
+    for (const child of childrenByParent.get(queue.shift()) ?? []) {
+      if (!seen.has(child)) {
+        seen.add(child);
+        descendants.push(child);
+        queue.push(child);
+      }
+    }
+  }
+  return descendants;
+}
+
+/**
+ * Terminates a process, its process group, and every descendant, including
+ * children that moved into their own process group (Codex starts each MCP
+ * server that way, so a group kill alone leaves them behind).
+ */
+export function terminateProcessTreeDeep(pid, options = {}) {
+  if (!Number.isFinite(pid)) {
+    return { attempted: false, delivered: false, pids: [] };
+  }
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32") {
+    const result = terminateProcessTree(pid, options);
+    return { ...result, pids: [pid] };
+  }
+
+  const killImpl = options.killImpl ?? process.kill.bind(process);
+  const descendants = listDescendantPids(pid, options);
+  const result = terminateProcessTree(pid, options);
+  for (const child of descendants) {
+    try {
+      killImpl(child, "SIGTERM");
+    } catch {
+      // Already gone.
+    }
+  }
+  return { ...result, pids: [pid, ...descendants] };
+}
+
+export function killSurvivors(pids, options = {}) {
+  const killImpl = options.killImpl ?? process.kill.bind(process);
+  const survivors = pids.filter((pid) => isProcessAlive(pid, { killImpl }));
+  for (const pid of survivors) {
+    try {
+      killImpl(pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }
+  return survivors;
+}
+
+function readParentPid(pid, runCommandImpl) {
+  const result = runCommandImpl("ps", ["-o", "ppid=,comm=", "-p", String(pid)]);
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  const match = result.stdout.trim().match(/^(\d+)\s+(.*)$/);
+  return match ? { ppid: Number(match[1]), comm: match[2] } : null;
+}
+
+export const CLAUDE_PID_ENV = "CODEX_COMPANION_CLAUDE_PID";
+
+/**
+ * Finds the PID of the Claude Code session that owns this process: an explicit
+ * env override, Claude Code's own CLAUDE_PID, or the nearest `claude` ancestor.
+ */
+export function resolveClaudeSessionPid(options = {}) {
+  const env = options.env ?? process.env;
+  const killImpl = options.killImpl;
+  for (const name of [CLAUDE_PID_ENV, "CLAUDE_PID"]) {
+    const value = Number(env[name]);
+    if (Number.isInteger(value) && value > 1 && isProcessAlive(value, { killImpl })) {
+      return value;
+    }
+  }
+  if ((options.platform ?? process.platform) === "win32") {
+    return null;
+  }
+
+  const runCommandImpl = options.runCommandImpl ?? runCommand;
+  let pid = options.startPid ?? process.ppid;
+  for (let depth = 0; depth < 32 && pid > 1; depth += 1) {
+    const info = readParentPid(pid, runCommandImpl);
+    if (!info) {
+      return null;
+    }
+    if (/(^|\/)claude$/i.test(info.comm.trim())) {
+      return pid;
+    }
+    pid = info.ppid;
+  }
+  return null;
+}
+
 export function formatCommandFailure(result) {
   const parts = [`${result.command} ${result.args.join(" ")}`.trim()];
   if (result.signal) {

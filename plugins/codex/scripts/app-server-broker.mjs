@@ -8,8 +8,55 @@ import process from "node:process";
 import { parseArgs } from "./lib/args.mjs";
 import { BROKER_BUSY_RPC_CODE, CodexAppServerClient } from "./lib/app-server.mjs";
 import { parseBrokerEndpoint } from "./lib/broker-endpoint.mjs";
+import { clearBrokerStateFile, unregisterSessionBroker } from "./lib/broker-lifecycle.mjs";
+import { isProcessAlive, killSurvivors, listDescendantPids } from "./lib/process.mjs";
 
 const STREAMING_METHODS = new Set(["turn/start", "review/start", "thread/compact/start"]);
+// Codex starts a fresh set of MCP servers for every thread it loads and keeps
+// them until the app-server exits, so these count towards a recycle.
+const THREAD_LOADING_METHODS = new Set(["thread/start", "thread/resume", "thread/fork", "review/start"]);
+
+export const IDLE_TIMEOUT_ENV = "CODEX_COMPANION_BROKER_IDLE_TIMEOUT_MS";
+export const MAX_THREADS_ENV = "CODEX_COMPANION_BROKER_MAX_THREADS";
+export const WATCH_INTERVAL_ENV = "CODEX_COMPANION_BROKER_WATCH_INTERVAL_MS";
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const DEFAULT_MAX_THREADS = 8;
+const DEFAULT_WATCH_INTERVAL_MS = 5000;
+// A client that keeps its socket open after the Claude session died must not
+// keep the broker alive forever.
+const ORPHAN_GRACE_MS = 10 * 60 * 1000;
+const APP_SERVER_EXIT_TIMEOUT_MS = 5000;
+const MCP_EXIT_GRACE_MS = 2000;
+
+function readDurationOption(value, envName, fallback) {
+  const raw = value ?? process.env[envName];
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Invalid ${envName}: ${raw}`);
+  }
+  return parsed;
+}
+
+function log(message) {
+  process.stderr.write(`[${new Date().toISOString()}] broker ${process.pid}: ${message}\n`);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function removeIfExists(filePath) {
+  try {
+    if (filePath && fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch {
+    // Best-effort cleanup.
+  }
+}
 
 function buildStreamThreadIds(method, params, result) {
   const threadIds = new Set();
@@ -48,11 +95,24 @@ function writePidFile(pidFile) {
 async function main() {
   const [subcommand, ...argv] = process.argv.slice(2);
   if (subcommand !== "serve") {
-    throw new Error("Usage: node scripts/app-server-broker.mjs serve --endpoint <value> [--cwd <path>] [--pid-file <path>]");
+    throw new Error(
+      "Usage: node scripts/app-server-broker.mjs serve --endpoint <value> [--cwd <path>] [--pid-file <path>] " +
+        "[--state-file <path>] [--parent-pid <pid>] [--session-id <id>] [--idle-timeout-ms <ms>] [--max-threads <n>]"
+    );
   }
 
   const { options } = parseArgs(argv, {
-    valueOptions: ["cwd", "pid-file", "endpoint"]
+    valueOptions: [
+      "cwd",
+      "pid-file",
+      "endpoint",
+      "state-file",
+      "parent-pid",
+      "session-id",
+      "idle-timeout-ms",
+      "max-threads",
+      "watch-interval-ms"
+    ]
   });
 
   if (!options.endpoint) {
@@ -63,13 +123,28 @@ async function main() {
   const endpoint = String(options.endpoint);
   const listenTarget = parseBrokerEndpoint(endpoint);
   const pidFile = options["pid-file"] ? path.resolve(options["pid-file"]) : null;
+  const stateFile = options["state-file"] ? path.resolve(options["state-file"]) : null;
+  const sessionId = options["session-id"] ? String(options["session-id"]) : null;
+  const parentPid = options["parent-pid"] ? Number(options["parent-pid"]) : null;
+  const idleTimeoutMs = readDurationOption(options["idle-timeout-ms"], IDLE_TIMEOUT_ENV, DEFAULT_IDLE_TIMEOUT_MS);
+  const maxThreads = readDurationOption(options["max-threads"], MAX_THREADS_ENV, DEFAULT_MAX_THREADS);
+  const watchIntervalMs =
+    readDurationOption(options["watch-interval-ms"], WATCH_INTERVAL_ENV, DEFAULT_WATCH_INTERVAL_MS) ||
+    DEFAULT_WATCH_INTERVAL_MS;
   writePidFile(pidFile);
 
-  const appClient = await CodexAppServerClient.connect(cwd, { disableBroker: true });
+  let appClient = null;
+  let recycling = null;
+  let shuttingDown = false;
+  let threadCount = 0;
+  let lastActivityAt = Date.now();
+  let parentGoneAt = null;
   let activeRequestSocket = null;
   let activeStreamSocket = null;
   let activeStreamThreadIds = null;
   const sockets = new Set();
+  let server = null;
+  let watchTimer = null;
 
   function clearSocketOwnership(socket) {
     if (activeRequestSocket === socket) {
@@ -99,28 +174,158 @@ async function main() {
     }
   }
 
-  async function shutdown(server) {
-    for (const socket of sockets) {
-      socket.end();
+  async function startAppClient() {
+    const client = await CodexAppServerClient.connect(cwd, { disableBroker: true });
+    client.setNotificationHandler((message) => {
+      lastActivityAt = Date.now();
+      routeNotification(message);
+      if (message.method === "turn/completed") {
+        void maybeRecycle();
+      }
+    });
+    client.exitPromise.then(() => {
+      if (appClient === client && !shuttingDown && !recycling) {
+        void shutdown(`codex app-server exited${client.exitError ? `: ${client.exitError.message}` : ""}`);
+      }
+    });
+    return client;
+  }
+
+  async function closeAppClient(client) {
+    const appServerPid = client.proc?.pid ?? null;
+    // MCP servers run in their own process groups; remember them before the
+    // app-server exits and they get reparented.
+    const descendants = appServerPid ? listDescendantPids(appServerPid) : [];
+    let exited = false;
+    await Promise.race([
+      client.close().then(
+        () => {
+          exited = true;
+        },
+        () => {
+          exited = true;
+        }
+      ),
+      sleep(APP_SERVER_EXIT_TIMEOUT_MS)
+    ]);
+    if (!exited && appServerPid) {
+      killSurvivors([appServerPid]);
     }
-    await appClient.close().catch(() => {});
-    await new Promise((resolve) => server.close(resolve));
-    if (listenTarget.kind === "unix" && fs.existsSync(listenTarget.path)) {
-      fs.unlinkSync(listenTarget.path);
+    const pending = descendants.filter((pid) => isProcessAlive(pid));
+    for (const pid of pending) {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // Already gone.
+      }
     }
-    if (pidFile && fs.existsSync(pidFile)) {
-      fs.unlinkSync(pidFile);
+    if (pending.length > 0) {
+      const deadline = Date.now() + MCP_EXIT_GRACE_MS;
+      while (Date.now() < deadline && pending.some((pid) => isProcessAlive(pid))) {
+        await sleep(100);
+      }
+      killSurvivors(pending);
     }
   }
 
-  appClient.setNotificationHandler(routeNotification);
+  function isIdle() {
+    return !recycling && !activeRequestSocket && !activeStreamSocket;
+  }
 
-  const server = net.createServer((socket) => {
+  async function maybeRecycle() {
+    if (shuttingDown || recycling || maxThreads <= 0 || threadCount < maxThreads || !isIdle() || sockets.size > 0) {
+      return;
+    }
+    const previous = appClient;
+    log(`recycling codex app-server after ${threadCount} threads`);
+    recycling = (async () => {
+      await closeAppClient(previous);
+      threadCount = 0;
+      appClient = await startAppClient();
+    })();
+    try {
+      await recycling;
+    } catch (error) {
+      log(`recycle failed: ${error instanceof Error ? error.message : String(error)}`);
+      recycling = null;
+      await shutdown("codex app-server restart failed");
+      return;
+    }
+    recycling = null;
+  }
+
+  async function shutdown(reason) {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    log(`shutting down: ${reason}`);
+    clearInterval(watchTimer);
+    for (const socket of sockets) {
+      socket.end();
+    }
+    if (recycling) {
+      await recycling.catch(() => {});
+    }
+    if (appClient) {
+      await closeAppClient(appClient);
+    }
+    if (server) {
+      await Promise.race([new Promise((resolve) => server.close(resolve)), sleep(1000)]);
+    }
+    for (const socket of sockets) {
+      socket.destroy();
+    }
+    if (listenTarget.kind === "unix") {
+      removeIfExists(listenTarget.path);
+    }
+    clearBrokerStateFile(stateFile, { endpoint });
+    unregisterSessionBroker(sessionId, endpoint);
+    removeIfExists(pidFile);
+    if (pidFile) {
+      // The session dir also holds the log file our stdio still points at.
+      try {
+        fs.rmSync(path.dirname(pidFile), { recursive: true, force: true });
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+    process.exit(0);
+  }
+
+  function watch() {
+    if (shuttingDown) {
+      return;
+    }
+    const now = Date.now();
+    if (parentPid && parentGoneAt === null && !isProcessAlive(parentPid)) {
+      parentGoneAt = now;
+      log(`Claude session process ${parentPid} is gone`);
+    }
+    if (parentGoneAt !== null) {
+      if ((sockets.size === 0 && isIdle()) || now - parentGoneAt >= ORPHAN_GRACE_MS) {
+        void shutdown(`Claude session process ${parentPid} exited`);
+      }
+      return;
+    }
+    if (idleTimeoutMs > 0 && sockets.size === 0 && isIdle() && now - lastActivityAt >= idleTimeoutMs) {
+      void shutdown(`idle for ${Math.round((now - lastActivityAt) / 1000)}s`);
+      return;
+    }
+    void maybeRecycle();
+  }
+
+  appClient = await startAppClient();
+  watchTimer = setInterval(watch, Math.min(watchIntervalMs, idleTimeoutMs > 0 ? idleTimeoutMs : watchIntervalMs));
+
+  server = net.createServer((socket) => {
     sockets.add(socket);
+    lastActivityAt = Date.now();
     socket.setEncoding("utf8");
     let buffer = "";
 
     socket.on("data", async (chunk) => {
+      lastActivityAt = Date.now();
       buffer += chunk;
       let newlineIndex = buffer.indexOf("\n");
       while (newlineIndex !== -1) {
@@ -159,11 +364,21 @@ async function main() {
 
         if (message.id !== undefined && message.method === "broker/shutdown") {
           send(socket, { id: message.id, result: {} });
-          await shutdown(server);
-          process.exit(0);
+          await shutdown("shutdown requested");
         }
 
         if (message.id === undefined) {
+          continue;
+        }
+
+        if (recycling) {
+          await recycling.catch(() => {});
+        }
+        if (shuttingDown) {
+          send(socket, {
+            id: message.id,
+            error: buildJsonRpcError(BROKER_BUSY_RPC_CODE, "Shared Codex broker is shutting down.")
+          });
           continue;
         }
 
@@ -199,6 +414,9 @@ async function main() {
 
         try {
           const result = await appClient.request(message.method, message.params ?? {});
+          if (THREAD_LOADING_METHODS.has(message.method)) {
+            threadCount += 1;
+          }
           send(socket, { id: message.id, result });
           if (isStreaming) {
             activeStreamSocket = socket;
@@ -225,6 +443,8 @@ async function main() {
     socket.on("close", () => {
       sockets.delete(socket);
       clearSocketOwnership(socket);
+      lastActivityAt = Date.now();
+      void maybeRecycle();
     });
 
     socket.on("error", () => {
@@ -233,14 +453,12 @@ async function main() {
     });
   });
 
-  process.on("SIGTERM", async () => {
-    await shutdown(server);
-    process.exit(0);
+  process.on("SIGTERM", () => {
+    void shutdown("SIGTERM");
   });
 
-  process.on("SIGINT", async () => {
-    await shutdown(server);
-    process.exit(0);
+  process.on("SIGINT", () => {
+    void shutdown("SIGINT");
   });
 
   server.listen(listenTarget.path);

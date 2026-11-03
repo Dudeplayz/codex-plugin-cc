@@ -175,6 +175,38 @@ test("task runs when the active provider does not require OpenAI login", () => {
   assert.match(result.stdout, /Handled the requested task/);
 });
 
+test("task --mcp enables only the selected MCP servers for the thread", () => {
+  const repo = makeTempDir();
+  const binDir = makeTempDir();
+  installFakeCodex(binDir);
+  initGitRepo(repo);
+  fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+  run("git", ["add", "README.md"], { cwd: repo });
+  run("git", ["commit", "-m", "init"], { cwd: repo });
+  const env = buildEnv(binDir);
+  const fakeState = () => JSON.parse(fs.readFileSync(path.join(binDir, "fake-codex-state.json"), "utf8"));
+
+  const selected = run("node", [SCRIPT, "task", "--mcp", "rea", "inspect the binary"], { cwd: repo, env });
+  assert.equal(selected.status, 0, selected.stderr);
+  assert.deepEqual(fakeState().lastThreadStartConfig, {
+    mcp_servers: { rea: { enabled: true }, playwright: { enabled: false } }
+  });
+
+  const plain = run("node", [SCRIPT, "task", "no override"], { cwd: repo, env });
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(fakeState().lastThreadStartConfig, null);
+
+  const unknown = run("node", [SCRIPT, "task", "--mcp", "nope", "bad selection"], { cwd: repo, env });
+  assert.notEqual(unknown.status, 0);
+  assert.match(unknown.stderr + unknown.stdout, /Unknown MCP server: nope/);
+
+  run("node", [SESSION_HOOK, "SessionEnd"], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({ hook_event_name: "SessionEnd", cwd: repo })
+  });
+});
+
 test("task runs without auth preflight so Codex can refresh an expired session", () => {
   const repo = makeTempDir();
   const binDir = makeTempDir();
@@ -669,7 +701,7 @@ test("task --resume-last ignores running tasks from other Claude sessions", () =
   assert.match(resume.stderr, /No previous Codex task thread was found for this repository\./);
 });
 
-test("session start hook exports the Claude session id, transcript path, and plugin data dir", () => {
+test("session start hook exports the Claude session id, transcript path, plugin data dir, and Claude PID", () => {
   const repo = makeTempDir();
   const envFile = path.join(makeTempDir(), "claude-env.sh");
   fs.writeFileSync(envFile, "", "utf8");
@@ -694,7 +726,7 @@ test("session start hook exports the Claude session id, transcript path, and plu
   assert.equal(result.status, 0, result.stderr);
   assert.equal(
     fs.readFileSync(envFile, "utf8"),
-    `export CODEX_COMPANION_SESSION_ID='sess-current'\nexport CODEX_COMPANION_TRANSCRIPT_PATH='${transcriptPath}'\nexport CLAUDE_PLUGIN_DATA='${pluginDataDir}'\n`
+    `export CODEX_COMPANION_SESSION_ID='sess-current'\nexport CODEX_COMPANION_TRANSCRIPT_PATH='${transcriptPath}'\nexport CLAUDE_PLUGIN_DATA='${pluginDataDir}'\nexport CODEX_COMPANION_CLAUDE_PID='${process.pid}'\n`
   );
 });
 

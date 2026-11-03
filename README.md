@@ -5,6 +5,12 @@ Use Codex from inside Claude Code for code reviews or to delegate tasks to Codex
 This plugin is for Claude Code users who want an easy way to start using Codex from the workflow
 they already have.
 
+> [!NOTE]
+> This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc) that stops the
+> shared Codex broker from leaking processes (idle timeout, exit with the Claude session, per-session
+> cleanup, app-server recycling), adds per-thread MCP server selection (`--mcp`), and routes rescue tasks
+> to GPT-6.1 Sol/Terra and GPT-6 Luna. See [Shared broker lifecycle](#shared-broker-lifecycle).
+
 <video src="./docs/plugin-demo.webm" controls muted playsinline autoplay></video>
 
 ## What You Get
@@ -150,6 +156,8 @@ Examples:
 /codex:rescue --model gpt-6.1-sol --effort high investigate the flaky integration test
 /codex:rescue --model spark summarize the supplied test logs
 /codex:rescue --background investigate the regression
+/codex:rescue --mcp rea reverse engineer the bundled helper binary
+/codex:rescue --cwd /path/to/worktree fix the failing test there
 ```
 
 You can also just ask for a task to be delegated to Codex:
@@ -163,6 +171,8 @@ Ask Codex to redesign the database connection to be more resilient.
 - if `--model` is omitted, active Codex model/provider config applies; explicit `--effort` still passes through
 - if you say `spark`, plugin maps it to `gpt-6-luna`; the legacy spark alias is read-only for supplied-material summaries
 - follow-up rescue requests can continue the latest Codex task in the repo
+- `--mcp <names>` enables only the listed MCP servers from your Codex config for that thread, `--mcp none` disables all of them, `--mcp all` (or no flag) keeps your config; set `CODEX_COMPANION_DEFAULT_MCP` to change the default. MCP servers that come from Codex plugins are not affected.
+- `--cwd <path>` runs Codex in another repository or git worktree; Codex can only write inside the repository that path belongs to
 
 ### `/codex:transfer`
 
@@ -300,6 +310,22 @@ This way you can review the Codex work or continue the work there.
 If you are already signed into Codex on this machine, that account should work immediately here too. This plugin uses your local Codex CLI authentication.
 
 If you only use Claude Code today and have not used Codex yet, you will also need to sign in to Codex with either a ChatGPT account or an API key. [Codex is available with your ChatGPT subscription](https://developers.openai.com/codex/pricing/), and [`codex login`](https://developers.openai.com/codex/cli/reference/#codex-login) supports both ChatGPT and API key sign-in. Run `/codex:setup` to check whether Codex is ready, and use `!codex login` if it is not.
+
+### Shared broker lifecycle
+
+Commands share one `codex app-server` per workspace through a small broker process. The broker shuts
+itself down, together with the app-server and the MCP servers it started, when:
+
+- no client has been connected and no turn has run for `CODEX_COMPANION_BROKER_IDLE_TIMEOUT_MS`
+  (default 30 minutes, `0` disables the timeout),
+- the Claude Code session that started it exits (its PID comes from `CODEX_COMPANION_CLAUDE_PID`,
+  `CLAUDE_PID`, or the nearest `claude` ancestor process),
+- that session ends: the `SessionEnd` hook stops every broker the session started, in every workspace.
+
+Codex starts a fresh set of MCP servers for each thread and keeps them until the app-server exits.
+The broker therefore restarts its app-server once it has loaded `CODEX_COMPANION_BROKER_MAX_THREADS`
+threads (default 8, `0` disables) and nothing is running. While it runs, each broker logs restarts and
+the reason for its shutdown to `broker.log` in its session directory.
 
 ### Does the plugin use a separate Codex runtime?
 

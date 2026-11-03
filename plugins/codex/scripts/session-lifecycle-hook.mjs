@@ -3,15 +3,23 @@
 import fs from "node:fs";
 import process from "node:process";
 
-import { terminateProcessTree } from "./lib/process.mjs";
+import {
+  CLAUDE_PID_ENV,
+  isProcessAlive,
+  resolveClaudeSessionPid,
+  terminateProcessTree,
+  terminateProcessTreeDeep
+} from "./lib/process.mjs";
 import { BROKER_ENDPOINT_ENV } from "./lib/app-server.mjs";
 import {
   clearBrokerSession,
   LOG_FILE_ENV,
   loadBrokerSession,
+  loadSessionBrokers,
   PID_FILE_ENV,
   sendBrokerShutdown,
-  teardownBrokerSession
+  teardownBrokerSession,
+  unregisterSessionBroker
 } from "./lib/broker-lifecycle.mjs";
 import { loadState, resolveStateFile, saveState } from "./lib/state.mjs";
 import { TRANSCRIPT_PATH_ENV } from "./lib/claude-session-transfer.mjs";
@@ -19,6 +27,7 @@ import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
 const PLUGIN_DATA_ENV = "CLAUDE_PLUGIN_DATA";
+const BROKER_EXIT_WAIT_MS = 2000;
 
 function readHookInput() {
   const raw = fs.readFileSync(0, "utf8").trim();
@@ -78,11 +87,44 @@ function handleSessionStart(input) {
   appendEnvVar(SESSION_ID_ENV, input.session_id);
   appendEnvVar(TRANSCRIPT_PATH_ENV, input.transcript_path);
   appendEnvVar(PLUGIN_DATA_ENV, process.env[PLUGIN_DATA_ENV]);
+  // Brokers watch this PID and exit once the Claude session is gone, even when
+  // SessionEnd never runs (crash, kill, closed app window).
+  appendEnvVar(CLAUDE_PID_ENV, resolveClaudeSessionPid());
+}
+
+async function waitForExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !isProcessAlive(pid);
+}
+
+async function shutdownBroker(broker) {
+  if (broker.endpoint) {
+    await sendBrokerShutdown(broker.endpoint);
+  }
+  const pid = Number.isInteger(broker.pid) ? broker.pid : null;
+  const exited = pid === null || (await waitForExit(pid, BROKER_EXIT_WAIT_MS));
+  teardownBrokerSession({
+    endpoint: broker.endpoint ?? null,
+    pidFile: broker.pidFile ?? null,
+    logFile: broker.logFile ?? null,
+    sessionDir: broker.sessionDir ?? null,
+    pid,
+    // Only force-kill a broker that ignored the shutdown request; its PID is
+    // not trusted once it has exited.
+    killProcess: exited ? null : terminateProcessTreeDeep
+  });
 }
 
 async function handleSessionEnd(input) {
   const cwd = input.cwd || process.cwd();
-  const brokerSession =
+  const sessionId = input.session_id || process.env[SESSION_ID_ENV] || null;
+  const cwdBroker =
     loadBrokerSession(cwd) ??
     (process.env[BROKER_ENDPOINT_ENV]
       ? {
@@ -91,26 +133,32 @@ async function handleSessionEnd(input) {
           logFile: process.env[LOG_FILE_ENV] ?? null
         }
       : null);
-  const brokerEndpoint = brokerSession?.endpoint ?? null;
-  const pidFile = brokerSession?.pidFile ?? null;
-  const logFile = brokerSession?.logFile ?? null;
-  const sessionDir = brokerSession?.sessionDir ?? null;
-  const pid = brokerSession?.pid ?? null;
 
-  if (brokerEndpoint) {
-    await sendBrokerShutdown(brokerEndpoint);
+  // The session may have started brokers for other workspaces too (worktrees,
+  // `--cwd`), so shut down everything registered under its session id.
+  const brokers = [];
+  const seenEndpoints = new Set();
+  for (const broker of [cwdBroker ? { ...cwdBroker, cwd } : null, ...loadSessionBrokers(sessionId)]) {
+    if (!broker || (broker.endpoint && seenEndpoints.has(broker.endpoint))) {
+      continue;
+    }
+    seenEndpoints.add(broker.endpoint);
+    brokers.push(broker);
   }
 
-  cleanupSessionJobs(cwd, input.session_id || process.env[SESSION_ID_ENV]);
-  teardownBrokerSession({
-    endpoint: brokerEndpoint,
-    pidFile,
-    logFile,
-    sessionDir,
-    pid,
-    killProcess: terminateProcessTree
-  });
-  clearBrokerSession(cwd);
+  await Promise.all(brokers.map((broker) => shutdownBroker(broker)));
+
+  const workspaces = new Set([cwd, ...brokers.map((broker) => broker.cwd).filter(Boolean)]);
+  for (const workspace of workspaces) {
+    cleanupSessionJobs(workspace, sessionId);
+  }
+  for (const broker of brokers) {
+    clearBrokerSession(broker.cwd ?? cwd, broker.cwd && broker.cwd !== cwd ? { endpoint: broker.endpoint } : {});
+    unregisterSessionBroker(sessionId, broker.endpoint);
+  }
+  if (brokers.length === 0) {
+    clearBrokerSession(cwd);
+  }
 }
 
 async function main() {

@@ -4,6 +4,17 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 
+// Tests often run inside a Claude Code session. Drop the variables it exports so
+// test jobs and brokers do not attach to that session or its plugin data, and
+// tie every broker a test spawns to the test process so none outlives the run.
+for (const name of Object.keys(process.env)) {
+  if (/^(CODEX_COMPANION_|CLAUDE_PLUGIN_)/.test(name) || name === "CLAUDE_CODE_SESSION_ID" || name === "CLAUDE_PID") {
+    delete process.env[name];
+  }
+}
+process.env.CODEX_COMPANION_CLAUDE_PID = String(process.pid);
+process.env.CODEX_COMPANION_BROKER_WATCH_INTERVAL_MS = "200";
+
 export function makeTempDir(prefix = "codex-plugin-test-") {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
