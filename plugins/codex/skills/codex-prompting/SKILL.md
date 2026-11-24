@@ -1,12 +1,12 @@
 ---
 name: codex-prompting
-description: Internal guidance for composing and routing Codex GPT-6.1 Sol/GPT-6.1 Terra/GPT-6 Luna prompts for coding, review, diagnosis, and research inside the Codex Claude Code plugin
+description: Internal guidance for composing and routing Codex GPT-6.2 Sol/GPT-6.1 Terra/GPT-6 Luna prompts for coding, review, diagnosis, and research inside the Codex Claude Code plugin
 user-invocable: false
 ---
 
-# GPT-6.1 Sol/Terra/GPT-6 Luna Prompting
+# GPT-6.2 Sol/GPT-6.1 Terra/GPT-6 Luna Prompting
 
-Use this skill only when `codex:codex-rescue` must shape a request or choose GPT-6.1 Sol/Terra/GPT-6 Luna runtime controls before forwarding it.
+Use this skill only when `codex:codex-rescue` must shape a request or choose GPT-6.2 Sol/GPT-6.1 Terra/GPT-6 Luna runtime controls before forwarding it.
 
 Preserve a concrete user request. Tighten it only when a missing success criterion, scope boundary, evidence requirement, output contract, or stopping rule would make Codex guess or stop early.
 
@@ -19,7 +19,7 @@ Remove generic "be concise", "be thorough", "think step by step", or "think hard
 ## Authoritative routing policy
 
 Select runtime controls; never place them in forwarded task text:
-- Use `gpt-6.1-sol` as master for complex or quality-first work when it is active Codex configuration. Preserve an explicit model and otherwise respect active model/provider configuration. Use Sol for non-trivial implementation, `gpt-6.1-terra` for the Low-Risk coding task below, browser/screenshot reproduction, and read-only interpretation that outgrows Luna, and Luna only for bounded routine no-source-write workers. Do not automatically route to Astra.
+- Use `gpt-6.2-sol` as master for complex or quality-first work when it is active Codex configuration. Preserve an explicit model and otherwise respect active model/provider configuration. Use Sol for non-trivial implementation, `gpt-6.1-terra` for the Low-Risk coding task below, browser/screenshot reproduction, and read-only interpretation that outgrows Luna, and Luna only for bounded routine no-source-write workers. Do not automatically route to Astra.
 - Use `medium` when cause, scope, and validation are clear. Use `high` when multiple hypotheses, interacting components, or plan plus diagnosis plus validation are required. If effort or scope is unclear, route to Sol at `high`. Use `low` for simple Luna mapping, summaries, or named test commands; use Luna `medium` for harder interpretation and escalate to read-only Terra `medium` instead of Luna `high`; use `xhigh` or `max` only when measured quality needs it.
 - Direct Luna stays no-source-write: mapping, supplied logs, or one named test command. Dedicated `test_runner` may use workspace-write for generated build/test artifacts only.
 - Terra at `high` with `--write` may own one Low-Risk coding task only when every condition holds: clear expected behavior and acceptance check; one module or a few tightly related files; no auth, permissions, secrets, data loss, migration, public-contract, concurrency, or architecture impact; no independent research/review needed; and relevant verification can run. Terra inspects, changes, and verifies as one writer. If its verification fails or it needs scope beyond the task, rerun on Sol at `high`; do not retry on Terra.

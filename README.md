@@ -9,7 +9,7 @@ they already have.
 > **This is a fork of [openai/codex-plugin-cc](https://github.com/openai/codex-plugin-cc)**, based on upstream
 > `1.0.6` ([`db52e28`](https://github.com/openai/codex-plugin-cc/commit/db52e28)). It fixes the background
 > processes that upstream leaks, lets you pick MCP servers per Codex thread, and routes delegated work to
-> the GPT-6.1 models. Everything else behaves like upstream. [Install the fork](#install).
+> the GPT-6.2 Sol, GPT-6.1 Terra and GPT-6 Luna models. Everything else behaves like upstream. [Install the fork](#install).
 
 ## What This Fork Changes
 
@@ -19,7 +19,7 @@ they already have.
 | **`SessionEnd` cleanup** | Only the broker of the session's working directory | Every broker the session started, in every workspace and worktree |
 | **MCP servers** | Every enabled server starts again for each Codex thread and stays until the app-server dies | App-server restarts after a few threads; `--mcp` switches servers per thread |
 | **Killing processes** | Group kill by saved PID | Whole tree, MCP servers included, only after checking the PID is still the same process |
-| **Model routing** | Codex defaults, `spark` = `gpt-5.3-codex-spark` | GPT-6.1 Sol / Terra and GPT-6 Luna policy, `spark` = `gpt-6-luna` (read-only), `--effort max` |
+| **Model routing** | Codex defaults, `spark` = `gpt-5.3-codex-spark` | GPT-6.2 Sol, GPT-6.1 Terra and GPT-6 Luna policy, `spark` = `gpt-6-luna` (read-only), `--effort max` |
 | **Worktrees** | `/codex:rescue` cannot target another worktree | `/codex:rescue --cwd <path>` |
 
 > [!WARNING]
@@ -88,13 +88,13 @@ for reverse engineering and `--mcp playwright` only for browser reproduction.
 > `--mcp` covers servers from `[mcp_servers]` in your Codex config. MCP servers that ship inside Codex
 > plugins (for example computer use) follow the plugin and are not switched by `--mcp`.
 
-### GPT-6.1 routing for `/codex:rescue`
+### GPT-6.2 routing for `/codex:rescue`
 
 The `codex:codex-rescue` subagent follows the `codex-prompting` skill to choose model and effort:
 
 | Model | Used for |
 | --- | --- |
-| **GPT-6.1 Sol** | Plans, reviews, architecture, security, root-cause work, anything ambiguous or cross-module (`high` when unsure) |
+| **GPT-6.2 Sol** | Plans, reviews, architecture, security, root-cause work, anything ambiguous or cross-module (`high` when unsure) |
 | **GPT-6.1 Terra** | One bounded low-risk coding task with clear acceptance checks, browser and screenshot reproduction, interpretation that outgrows Luna |
 | **GPT-6 Luna** | Read-only routine work: file mapping, supplied logs, one named test command; the `spark` alias maps here |
 
@@ -268,7 +268,7 @@ Use it when you want Codex to:
 
 It supports `--background`, `--wait`, `--resume`, and `--fresh`. If you omit `--resume` and `--fresh`, the plugin can offer to continue the latest rescue thread for this repo.
 
-Claude-Companion preserves active Codex model/provider config when `--model` is omitted. Configure GPT-6.1 Sol for implementation and complex work; select GPT-6 Luna for focused routine no-source-write work. The legacy spark alias is supplied-material, read-only summaries only. Sol medium fits clear bounded work; high fits reviews and ambiguous multi-step work; xhigh/max are selective escalations for a concrete quality gap. Astra is not automatically selected.
+Claude-Companion preserves active Codex model/provider config when `--model` is omitted. Configure GPT-6.2 Sol for implementation and complex work; select GPT-6 Luna for focused routine no-source-write work. The legacy spark alias is supplied-material, read-only summaries only. Sol medium fits clear bounded work; high fits reviews and ambiguous multi-step work; xhigh/max are selective escalations for a concrete quality gap. Astra is not automatically selected.
 
 Examples:
 
@@ -276,7 +276,7 @@ Examples:
 /codex:rescue investigate why the tests started failing
 /codex:rescue fix the failing test with the smallest safe patch
 /codex:rescue --resume apply the top fix from the last run
-/codex:rescue --model gpt-6.1-sol --effort high investigate the flaky integration test
+/codex:rescue --model gpt-6.2-sol --effort high investigate the flaky integration test
 /codex:rescue --model spark summarize the supplied test logs
 /codex:rescue --background investigate the regression
 /codex:rescue --mcp rea reverse engineer the bundled helper binary

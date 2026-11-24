@@ -156,7 +156,7 @@ test("rescue command absorbs continue semantics", () => {
   assert.match(runtimeSkill, /If the Bash call fails or Codex cannot be invoked, return nothing/i);
   assert.match(readme, /`codex:codex-rescue` subagent/i);
   assert.match(readme, /select GPT-6 Luna for focused routine no-source-write work/i);
-  assert.match(readme, /--model gpt-6\.1-sol --effort high/i);
+  assert.match(readme, /--model gpt-6\.2-sol --effort high/i);
   assert.match(readme, /`spark`, plugin maps it to `gpt-6-luna`; the legacy spark alias is read-only for supplied-material summaries/i);
   assert.match(readme, /continue a previous Codex task/i);
   assert.match(readme, /### `\/codex:setup`/);
@@ -196,7 +196,7 @@ test("internal docs use task terminology for rescue runs", () => {
   assert.match(runtimeSkill, /Use `task` for every rescue request/i);
   assert.match(runtimeSkill, /task --resume-last/i);
   assert.match(promptingSkill, /Prefer outcome-first prompts/i);
-  assert.match(promptingSkill, /Use `gpt-6\.1-sol` as master for complex or quality-first work when it is active Codex configuration/i);
+  assert.match(promptingSkill, /Use `gpt-6\.2-sol` as master for complex or quality-first work when it is active Codex configuration/i);
   assert.match(promptingSkill, /user-invocable:\s*false/);
   assert.match(promptingSkill, /Use GPT-6 Luna for summaries of supplied material\. It is read-only/i);
   assert.match(promptingSkill, /Authoritative routing policy/i);
